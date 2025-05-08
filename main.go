@@ -154,11 +154,16 @@ func main() {
 		case "ExposureTime":
 			exifData.ExposureTime = value
 		case "FNumber":
-			parts := strings.Split(value, "/")
-			numerator, _ := strconv.Atoi(parts[0])
-			denominator, _ := strconv.Atoi(parts[1])
-			f := float32(numerator) / float32(denominator)
-			output := fmt.Sprintf("%.1f", f)
+			var output string
+			if strings.Contains(value, "/") {
+				parts := strings.Split(value, "/")
+				numerator, _ := strconv.Atoi(parts[0])
+				denominator, _ := strconv.Atoi(parts[1])
+				f := float32(numerator) / float32(denominator)
+				output = fmt.Sprintf("%.1f", f)
+			} else {
+				output = value
+			}
 
 			exifData.FNumber = output
 		case "PhotographicSensitivity":
