@@ -4,9 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/dsoprea/go-exif/v3"
-	"github.com/dsoprea/go-exif/v3/common"
+	exifcommon "github.com/dsoprea/go-exif/v3/common"
 )
 
 /*
@@ -28,30 +31,47 @@ import (
 間表示し、日付と時間の間に空白文字［20.H］を 1 つ埋める。日時不明の場合は、コロン“:”以外の日
 付・時間の文字部を空白文字で埋めるか、または、全てを空白文字で埋めるべきである。文字列の長
 さは、NULL を含み 20Byte である。記載が無いときは不明として扱う。
-
 */
 
 // CIPA DC-008-2024 (Exif3.0)
 // https://www.cipa.jp/j/std/std-sec.html
 type ExifData struct {
-	make      string // カメラメーカー [TAG=0x010f]
-	model     string // カメラモデル [TAG=0x0110]
-	lensMake  string // レンズメーカー [TAG=0xa433]
-	lensModel string // レンズモデル [TAG=0xa434]
+	Make      string // カメラメーカー [TAG=0x010f]
+	Model     string // カメラモデル [TAG=0x0110]
+	LensMake  string // レンズメーカー [TAG=0xa433]
+	LensModel string // レンズモデル [TAG=0xa434]
 
-	exposureTime            int // 露出時間(シャッタースピード) [TAG=0x829a]
-	fNumber                 int // Fナンバー(f値) [TAG=0x829d]
-	photographicSensitivity int // 撮影感度(ISO感度) [TAG=0x8827]
-	focalLengthIn35mmFilm   int // 35mm換算レンズ焦点距離 [TAG=0xa405]
-	focalLength             int // レンズ焦点距離 [TAG=0x920a]
+	ExposureTime            string // 露出時間(シャッタースピード) [TAG=0x829a]
+	FNumber                 string // Fナンバー(f値) [TAG=0x829d]
+	PhotographicSensitivity string // 撮影感度(ISO感度) [TAG=0x8827]
+	FocalLengthIn35mmFilm   string // 35mm換算レンズ焦点距離 [TAG=0xa405]
+	FocalLength             string // レンズ焦点距離 [TAG=0x920a]
 
-	dateTimeOriginal string // 原画像データの生成日時 [TAG=0x9003]
-	pixelXDimension  int    // 実効画像幅 [TAG=0xa002]
-	pixelYDimension  int    // 実効画像高さ [TAG=0xa003]
+	DateTimeOriginal string // 原画像データの生成日時 [TAG=0x9003]
+	PixelXDimension  string // 実効画像幅 [TAG=0xa002]
+	PixelYDimension  string // 実効画像高さ [TAG=0xa003]
 }
 
 var (
-	filePath = ""
+	filePath string
+
+	IFD_PATH_MAP = map[string]struct {
+		tagId uint16
+		path  string
+	}{
+		"Make":                    {0x010f, IFD_PATH},
+		"Model":                   {0x0110, IFD_PATH},
+		"LensMake":                {0xa433, EXIF_IFD_PATH},
+		"LensModel":               {0xa434, EXIF_IFD_PATH},
+		"ExposureTime":            {0x829a, EXIF_IFD_PATH},
+		"FNumber":                 {0x829d, EXIF_IFD_PATH},
+		"PhotographicSensitivity": {0x8827, EXIF_IFD_PATH},
+		"FocalLengthIn35mmFilm":   {0xa405, EXIF_IFD_PATH},
+		"FocalLength":             {0x920a, EXIF_IFD_PATH},
+		"DateTimeOriginal":        {0x9003, EXIF_IFD_PATH},
+		"PixelXDimension":         {0xa002, EXIF_IFD_PATH},
+		"PixelYDimension":         {0xa003, EXIF_IFD_PATH},
+	}
 )
 
 const (
@@ -89,34 +109,77 @@ func main() {
 		os.Exit(1)
 	}
 
-	tagName := "Model" // edit
 	rootIfd := index.RootIfd
 
-	leafIfd, err := exif.FindIfdFromRootIfd(rootIfd, "IFD/Exif") // edit
-	if err != nil {
-		fmt.Println("Error FindIfdFromRootIfd:", err)
-		os.Exit(1)
+	exifData := ExifData{}
+
+	for tagName, tagInfo := range IFD_PATH_MAP {
+		tagId := tagInfo.tagId
+		ifdPath := tagInfo.path
+
+		ifd, err := exif.FindIfdFromRootIfd(rootIfd, ifdPath)
+		if err != nil {
+			fmt.Println("Error FindIfdFromRootIfd:", err)
+			os.Exit(1)
+		}
+
+		results, err := ifd.FindTagWithId(tagId)
+		if err != nil {
+			fmt.Println("Error FindTagWithName:", err)
+			os.Exit(1)
+		}
+
+		if len(results) == 0 {
+			fmt.Printf("Tag %s not found\n", tagName)
+			continue
+		}
+
+		item := results[0]
+
+		value, _ := item.FormatFirst()
+		if err != nil {
+			fmt.Println("Error Value:", err)
+			os.Exit(1)
+		}
+
+		switch tagName {
+		case "Make":
+			exifData.Make = value
+		case "Model":
+			exifData.Model = value
+		case "LensMake":
+			exifData.LensMake = value
+		case "LensModel":
+			exifData.LensModel = value
+		case "ExposureTime":
+			exifData.ExposureTime = value
+		case "FNumber":
+			parts := strings.Split(value, "/")
+			numerator, _ := strconv.Atoi(parts[0])
+			denominator, _ := strconv.Atoi(parts[1])
+			f := float32(numerator) / float32(denominator)
+			output := fmt.Sprintf("%.1f", f)
+
+			exifData.FNumber = output
+		case "PhotographicSensitivity":
+			exifData.PhotographicSensitivity = value
+		case "FocalLengthIn35mmFilm":
+			exifData.FocalLengthIn35mmFilm = value
+		case "FocalLength":
+			exifData.FocalLength = value
+		case "DateTimeOriginal":
+			t, err := time.Parse("2006:01:02 15:04:05", value)
+			if err != nil {
+				fmt.Println("Error parsing DateTimeOriginal:", err)
+				continue
+			}
+			output := t.Format("2006/01/02 15:04")
+
+			exifData.DateTimeOriginal = output
+		case "PixelXDimension":
+			exifData.PixelXDimension = value
+		case "PixelYDimension":
+			exifData.PixelYDimension = value
+		}
 	}
-
-	results, err := leafIfd.FindTagWithName(tagName) // edit
-	if err != nil {
-		fmt.Println("Error FindTagWithName:", err)
-		os.Exit(1)
-	}
-
-	if len(results) != 1 {
-		os.Exit(1)
-	}
-
-	item := results[0]
-
-	valueRaw, err := item.Value()
-	if err != nil {
-		fmt.Println("Error Value:", err)
-		os.Exit(1)
-	}
-
-	value := valueRaw
-
-	fmt.Printf("Tag: %s, Value: %s\n", tagName, value)
 }
