@@ -3,11 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"
+	"image/draw"
+	"image/jpeg"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/disintegration/imaging"
 	"github.com/dsoprea/go-exif/v3"
 	exifcommon "github.com/dsoprea/go-exif/v3/common"
 )
@@ -48,8 +52,13 @@ type ExifData struct {
 	FocalLength             string // レンズ焦点距離 [TAG=0x920a]
 
 	DateTimeOriginal string // 原画像データの生成日時 [TAG=0x9003]
-	PixelXDimension  string // 実効画像幅 [TAG=0xa002]
-	PixelYDimension  string // 実効画像高さ [TAG=0xa003]
+	PixelXDimension  int    // 実効画像幅 [TAG=0xa002]
+	PixelYDimension  int    // 実効画像高さ [TAG=0xa003]
+	Orientation      string // 画像の向き [TAG=0x0112]
+}
+
+// go-exiframeの設定
+type Config struct {
 }
 
 var (
@@ -71,6 +80,7 @@ var (
 		"DateTimeOriginal":        {0x9003, EXIF_IFD_PATH},
 		"PixelXDimension":         {0xa002, EXIF_IFD_PATH},
 		"PixelYDimension":         {0xa003, EXIF_IFD_PATH},
+		"Orientation":             {0x0112, IFD_PATH},
 	}
 )
 
@@ -78,6 +88,8 @@ const (
 	IFD_PATH      = "IFD"
 	EXIF_IFD_PATH = "IFD/Exif"
 	GPS_IFD_PATH  = "IFD/GPSInfo"
+
+	FRAME_PIXEL = 180
 )
 
 func main() {
@@ -89,6 +101,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	//
+	// Exif取得
 	rawExif, err := exif.SearchFileAndExtractExif(filePath)
 	if err != nil {
 		fmt.Println("Error SearchFileAndExtractExif:", err)
@@ -182,9 +196,65 @@ func main() {
 
 			exifData.DateTimeOriginal = output
 		case "PixelXDimension":
-			exifData.PixelXDimension = value
+			output, err := strconv.Atoi(value)
+			if err != nil {
+				fmt.Println("Error parsing PixelXDimension:", err)
+				os.Exit(1)
+			}
+
+			exifData.PixelXDimension = output
 		case "PixelYDimension":
-			exifData.PixelYDimension = value
+			output, err := strconv.Atoi(value)
+			if err != nil {
+				fmt.Println("Error parsing PixelYDimension:", err)
+				os.Exit(1)
+			}
+
+			exifData.PixelYDimension = output
+		case "Orientation":
+			exifData.Orientation = value
 		}
+	}
+
+	//
+	// 描画
+	fSrc, err := os.Open(filePath)
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		os.Exit(1)
+	}
+	defer fSrc.Close()
+
+	src, err := imaging.Open(filePath, imaging.AutoOrientation(true))
+	if err != nil {
+		fmt.Println("Error Decode:", err)
+		os.Exit(1)
+	}
+
+	// 画像のサイズを取得
+	srcBounds := src.Bounds()
+	srcWidth := srcBounds.Max.X
+	srcHeight := srcBounds.Max.Y
+
+	// 背景フレームの作成
+	dst := image.NewRGBA(image.Rect(0, 0, srcWidth+FRAME_PIXEL*2, srcHeight+FRAME_PIXEL*2))
+	white := image.White
+	draw.Draw(dst, dst.Bounds(), white, image.Point{}, draw.Src)
+
+	// 画像と背景フレームの描画
+	draw.Draw(dst, dst.Bounds(), src, image.Point{-FRAME_PIXEL, -FRAME_PIXEL}, draw.Src)
+
+	// result.jpeg として保存
+	fDst, err := os.Create("result.jpeg")
+	if err != nil {
+		fmt.Println("Error creating file:", err)
+		os.Exit(1)
+	}
+	defer fDst.Close()
+
+	err = jpeg.Encode(fDst, dst, &jpeg.Options{Quality: 100})
+	if err != nil {
+		fmt.Println("Error encoding JPEG:", err)
+		os.Exit(1)
 	}
 }
