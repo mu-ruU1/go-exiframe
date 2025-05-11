@@ -14,6 +14,11 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/dsoprea/go-exif/v3"
 	exifcommon "github.com/dsoprea/go-exif/v3/common"
+	"github.com/golang/freetype/truetype"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gomono"
+	"golang.org/x/image/font/gofont/gomonobold"
+	"golang.org/x/image/math/fixed"
 )
 
 /*
@@ -89,7 +94,10 @@ const (
 	EXIF_IFD_PATH = "IFD/Exif"
 	GPS_IFD_PATH  = "IFD/GPSInfo"
 
-	FRAME_PIXEL = 180
+	EXIF_LABEL_HEIGHT = 600
+	FRAME_PIXEL       = 180
+	LARGE_FONT_SIZE   = 200
+	FONT_SIZE         = 150
 )
 
 func main() {
@@ -237,7 +245,7 @@ func main() {
 	srcHeight := srcBounds.Max.Y
 
 	// 背景フレームの作成
-	dst := image.NewRGBA(image.Rect(0, 0, srcWidth+FRAME_PIXEL*2, srcHeight+FRAME_PIXEL*2))
+	dst := image.NewRGBA(image.Rect(0, 0, srcWidth+FRAME_PIXEL*2, srcHeight+FRAME_PIXEL*2+EXIF_LABEL_HEIGHT))
 	white := image.White
 	draw.Draw(dst, dst.Bounds(), white, image.Point{}, draw.Src)
 
@@ -252,6 +260,85 @@ func main() {
 	}
 	defer fDst.Close()
 
+	// Exif情報をJPEGに埋め込む
+	camData := exifData.Make + " " + exifData.Model
+	lensData := exifData.LensMake + " " + exifData.LensModel
+	expoData := exifData.FocalLengthIn35mmFilm + "mm  " + "f/" + exifData.FNumber + "  " + exifData.ExposureTime + "s  ISO" + exifData.PhotographicSensitivity
+	// timeData := exifData.DateTimeOriginal
+
+	fontColor := image.Black
+
+	boldfnt, err := truetype.Parse(gomonobold.TTF)
+	if err != nil {
+		fmt.Println("Error parsing font:", err)
+		os.Exit(1)
+	}
+
+	regularfnt, err := truetype.Parse(gomono.TTF)
+	if err != nil {
+		fmt.Println("Error parsing font:", err)
+		os.Exit(1)
+	}
+
+	boldFace := truetype.NewFace(boldfnt, &truetype.Options{
+		Size: LARGE_FONT_SIZE,
+	})
+
+	boldFace2 := truetype.NewFace(boldfnt, &truetype.Options{
+		Size: FONT_SIZE,
+	})
+
+	regularFace := truetype.NewFace(regularfnt, &truetype.Options{
+		Size: FONT_SIZE,
+	})
+
+	boldMetrics, regularMetrics := boldFace.Metrics(), regularFace.Metrics()
+	boldHeight, _ := boldMetrics.Height.Ceil(), regularMetrics.Height.Ceil()
+
+	dBold := &font.Drawer{
+		Dst:  dst,
+		Src:  fontColor,
+		Face: boldFace,
+		Dot:  fixed.Point26_6{},
+	}
+
+	dBold2 := &font.Drawer{
+		Dst:  dst,
+		Src:  fontColor,
+		Face: boldFace2,
+		Dot:  fixed.Point26_6{},
+	}
+
+	dRegular := &font.Drawer{
+		Dst:  dst,
+		Src:  fontColor,
+		Face: regularFace,
+		Dot:  fixed.Point26_6{},
+	}
+
+	// カメラデータ
+	dBold.Dot.X = fixed.I(FRAME_PIXEL)
+	dBold.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight)
+	dBold.DrawString(camData)
+
+	// レンズデータ
+	dRegular.Dot.X = fixed.I(FRAME_PIXEL)
+	dRegular.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight*2)
+	dRegular.DrawString(lensData)
+
+	// 撮影データ
+	expoDataWidth := dBold2.MeasureString(expoData).Ceil()
+	dBold2.Dot.X = fixed.I(srcWidth + FRAME_PIXEL - expoDataWidth)
+	dBold2.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight)
+	dBold2.DrawString(expoData)
+
+	// 撮影日時
+	timeDataWidth := dRegular.MeasureString(exifData.DateTimeOriginal).Ceil()
+	dRegular.Dot.X = fixed.I(srcWidth + FRAME_PIXEL - timeDataWidth)
+	dRegular.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight*2)
+	dRegular.DrawString(exifData.DateTimeOriginal)
+
+	// JPEGエンコード
 	err = jpeg.Encode(fDst, dst, &jpeg.Options{Quality: 100})
 	if err != nil {
 		fmt.Println("Error encoding JPEG:", err)
