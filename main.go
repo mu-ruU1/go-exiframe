@@ -7,6 +7,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -64,10 +65,19 @@ type ExifData struct {
 
 // go-exiframeの設定
 type Config struct {
+	filePath        string
+	frameColorBlack bool
+	noFrame         bool
+
+	fileName   string
+	frameColor *image.Uniform
+	textColor  *image.Uniform
 }
 
 var (
-	filePath string
+	filePath     string
+	framePixel   int = 180
+	noFramePixel int = 0
 
 	IFD_PATH_MAP = map[string]struct {
 		tagId uint16
@@ -95,23 +105,12 @@ const (
 	GPS_IFD_PATH  = "IFD/GPSInfo"
 
 	EXIF_LABEL_HEIGHT = 600
-	FRAME_PIXEL       = 180
 	LARGE_FONT_SIZE   = 200
 	FONT_SIZE         = 150
 )
 
-func main() {
-	flag.StringVar(&filePath, "f", "", "Path to the image file")
-	flag.Parse()
-
-	if filePath == "" {
-		fmt.Println("Please provide a file path using -f flag")
-		os.Exit(1)
-	}
-
-	//
-	// Exif取得
-	rawExif, err := exif.SearchFileAndExtractExif(filePath)
+func getExif(config *Config) (exifData *ExifData) {
+	rawExif, err := exif.SearchFileAndExtractExif(config.filePath)
 	if err != nil {
 		fmt.Println("Error SearchFileAndExtractExif:", err)
 		os.Exit(1)
@@ -133,7 +132,7 @@ func main() {
 
 	rootIfd := index.RootIfd
 
-	exifData := ExifData{}
+	exifData = &ExifData{}
 
 	for tagName, tagInfo := range IFD_PATH_MAP {
 		tagId := tagInfo.tagId
@@ -224,8 +223,10 @@ func main() {
 		}
 	}
 
-	//
-	// 描画
+	return exifData
+}
+
+func drawFrame(config *Config, exifData *ExifData) {
 	fSrc, err := os.Open(filePath)
 	if err != nil {
 		fmt.Println("Error opening file:", err)
@@ -244,16 +245,29 @@ func main() {
 	srcWidth := srcBounds.Max.X
 	srcHeight := srcBounds.Max.Y
 
+	if config.noFrame {
+		framePixel = 0
+		noFramePixel = 180
+	}
+
 	// 背景フレームの作成
-	dst := image.NewRGBA(image.Rect(0, 0, srcWidth+FRAME_PIXEL*2, srcHeight+FRAME_PIXEL*2+EXIF_LABEL_HEIGHT))
-	white := image.White
-	draw.Draw(dst, dst.Bounds(), white, image.Point{}, draw.Src)
+	dst := image.NewRGBA(image.Rect(0, 0, srcWidth+framePixel*2, srcHeight+framePixel*2+EXIF_LABEL_HEIGHT+noFramePixel))
+
+	if config.frameColorBlack {
+		config.frameColor = image.Black
+		config.textColor = image.White
+	} else {
+		config.frameColor = image.White
+		config.textColor = image.Black
+	}
+
+	draw.Draw(dst, dst.Bounds(), config.frameColor, image.Point{}, draw.Src)
 
 	// 画像と背景フレームの描画
-	draw.Draw(dst, dst.Bounds(), src, image.Point{-FRAME_PIXEL, -FRAME_PIXEL}, draw.Src)
+	draw.Draw(dst, dst.Bounds(), src, image.Point{-framePixel, -framePixel}, draw.Src)
 
 	// result.jpeg として保存
-	fDst, err := os.Create("result.jpeg")
+	fDst, err := os.Create("exiframe-" + config.fileName)
 	if err != nil {
 		fmt.Println("Error creating file:", err)
 		os.Exit(1)
@@ -264,9 +278,6 @@ func main() {
 	camData := exifData.Make + " " + exifData.Model
 	lensData := exifData.LensMake + " " + exifData.LensModel
 	expoData := exifData.FocalLengthIn35mmFilm + "mm  " + "f/" + exifData.FNumber + "  " + exifData.ExposureTime + "s  ISO" + exifData.PhotographicSensitivity
-	// timeData := exifData.DateTimeOriginal
-
-	fontColor := image.Black
 
 	boldfnt, err := truetype.Parse(gomonobold.TTF)
 	if err != nil {
@@ -297,45 +308,45 @@ func main() {
 
 	dBold := &font.Drawer{
 		Dst:  dst,
-		Src:  fontColor,
+		Src:  config.textColor,
 		Face: boldFace,
 		Dot:  fixed.Point26_6{},
 	}
 
 	dBold2 := &font.Drawer{
 		Dst:  dst,
-		Src:  fontColor,
+		Src:  config.textColor,
 		Face: boldFace2,
 		Dot:  fixed.Point26_6{},
 	}
 
 	dRegular := &font.Drawer{
 		Dst:  dst,
-		Src:  fontColor,
+		Src:  config.textColor,
 		Face: regularFace,
 		Dot:  fixed.Point26_6{},
 	}
 
 	// カメラデータ
-	dBold.Dot.X = fixed.I(FRAME_PIXEL)
-	dBold.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight)
+	dBold.Dot.X = fixed.I(framePixel + noFramePixel)
+	dBold.Dot.Y = fixed.I(srcHeight + framePixel*2 + boldHeight + noFramePixel)
 	dBold.DrawString(camData)
 
 	// レンズデータ
-	dRegular.Dot.X = fixed.I(FRAME_PIXEL)
-	dRegular.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight*2)
+	dRegular.Dot.X = fixed.I(framePixel + noFramePixel)
+	dRegular.Dot.Y = fixed.I(srcHeight + framePixel*2 + boldHeight*2 + noFramePixel)
 	dRegular.DrawString(lensData)
 
 	// 撮影データ
 	expoDataWidth := dBold2.MeasureString(expoData).Ceil()
-	dBold2.Dot.X = fixed.I(srcWidth + FRAME_PIXEL - expoDataWidth)
-	dBold2.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight)
+	dBold2.Dot.X = fixed.I(srcWidth + framePixel - expoDataWidth - noFramePixel)
+	dBold2.Dot.Y = fixed.I(srcHeight + framePixel*2 + boldHeight + noFramePixel)
 	dBold2.DrawString(expoData)
 
 	// 撮影日時
 	timeDataWidth := dRegular.MeasureString(exifData.DateTimeOriginal).Ceil()
-	dRegular.Dot.X = fixed.I(srcWidth + FRAME_PIXEL - timeDataWidth)
-	dRegular.Dot.Y = fixed.I(srcHeight + FRAME_PIXEL*2 + boldHeight*2)
+	dRegular.Dot.X = fixed.I(srcWidth + framePixel - timeDataWidth - noFramePixel)
+	dRegular.Dot.Y = fixed.I(srcHeight + framePixel*2 + boldHeight*2 + noFramePixel)
 	dRegular.DrawString(exifData.DateTimeOriginal)
 
 	// JPEGエンコード
@@ -344,4 +355,29 @@ func main() {
 		fmt.Println("Error encoding JPEG:", err)
 		os.Exit(1)
 	}
+}
+
+func main() {
+	flag.StringVar(&filePath, "f", "", "Path to the image file")
+	frameColorBlack := flag.Bool("black", false, "Frame color black")
+	noFrame := flag.Bool("no-frame", false, "No frame")
+	flag.Parse()
+
+	if filePath == "" {
+		fmt.Println("Please provide a file path using -f flag")
+		os.Exit(1)
+	}
+
+	fileName := filepath.Base(filePath)
+
+	config := &Config{
+		filePath:        filePath,
+		frameColorBlack: *frameColorBlack,
+		noFrame:         *noFrame,
+		fileName:        fileName,
+	}
+
+	exifData := getExif(config)
+
+	drawFrame(config, exifData)
 }
