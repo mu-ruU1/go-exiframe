@@ -68,6 +68,7 @@ type Config struct {
 	filePath        string
 	frameColorBlack bool
 	noFrame         bool
+	noModelData     bool
 
 	fileName   string
 	frameColor *image.Uniform
@@ -107,6 +108,8 @@ const (
 	EXIF_LABEL_HEIGHT = 600
 	LARGE_FONT_SIZE   = 200
 	FONT_SIZE         = 150
+
+	FILE_NAME_PREFIX = "exiframe-"
 )
 
 func getExif(config *Config) (exifData *ExifData) {
@@ -266,8 +269,8 @@ func drawFrame(config *Config, exifData *ExifData) {
 	// 画像と背景フレームの描画
 	draw.Draw(dst, dst.Bounds(), src, image.Point{-framePixel, -framePixel}, draw.Src)
 
-	// result.jpeg として保存
-	fDst, err := os.Create("exiframe-" + config.fileName)
+	// exiframe-*.jpg として保存
+	fDst, err := os.Create(FILE_NAME_PREFIX + config.fileName)
 	if err != nil {
 		fmt.Println("Error creating file:", err)
 		os.Exit(1)
@@ -275,8 +278,12 @@ func drawFrame(config *Config, exifData *ExifData) {
 	defer fDst.Close()
 
 	// Exif情報をJPEGに埋め込む
-	camData := exifData.Make + " " + exifData.Model
-	lensData := exifData.LensMake + " " + exifData.LensModel
+	var camData, lensData string
+	if !config.noModelData {
+		camData = exifData.Make + " " + exifData.Model
+		lensData = exifData.LensMake + " " + exifData.LensModel
+	}
+
 	expoData := exifData.FocalLengthIn35mmFilm + "mm  " + "f/" + exifData.FNumber + "  " + exifData.ExposureTime + "s  ISO" + exifData.PhotographicSensitivity
 
 	boldfnt, err := truetype.Parse(gomonobold.TTF)
@@ -358,9 +365,10 @@ func drawFrame(config *Config, exifData *ExifData) {
 }
 
 func main() {
-	flag.StringVar(&filePath, "f", "", "Path to the image file")
-	frameColorBlack := flag.Bool("black", false, "Frame color black")
-	noFrame := flag.Bool("no-frame", false, "No frame")
+	flag.StringVar(&filePath, "f", "", "Path to the image file (required)")
+	frameColorBlack := flag.Bool("black", false, "Use black color frame (default white)")
+	noFrame := flag.Bool("no-frame", false, "Do not draw frame (default draw frame)")
+	noModelData := flag.Bool("no-model", false, "Do not draw model data (default draw model data)")
 	flag.Parse()
 
 	if filePath == "" {
@@ -374,7 +382,9 @@ func main() {
 		filePath:        filePath,
 		frameColorBlack: *frameColorBlack,
 		noFrame:         *noFrame,
-		fileName:        fileName,
+		noModelData:     *noModelData,
+
+		fileName: fileName,
 	}
 
 	exifData := getExif(config)
